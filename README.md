@@ -44,9 +44,9 @@ Evolved from the foundations of the [Refacer](https://github.com/xaviviro/reface
 * Support for videos that have long duration
 * Preview generation for videos and GIFs (skips 90% of frames)
 * Multiple replacement modes:
- * **Single Face** (Fast): all faces are replaced by a single face. Ideal for images, GIFs or videos with a single face
- * **Multiple Faces** (Fast): faces are replaced by the faces you provide based on their order from left to right
- * **Faces by Match** (Slower): faces are first detected and replaced by the faces you provide.
+ * **Single Face** (Fast): all faces are replaced with a single face. Ideal for images, GIFs or videos with a single face
+ * **Multiple Faces** (Fast): faces are replaced with the faces you provide based on their order from left to right
+ * **Faces by Match** (Slower): faces are first detected and replaced with the faces you provide.
 * Improved GPU detection
 * Uses local Gradio cache with auto-cleanup on startup 
 * Includes a bulk image refacer utility (refacer_bulk.py) 
@@ -73,6 +73,8 @@ The application is compatible with both CPU and GPU (Nvidia CUDA) environments, 
 
 NeoRefacer has been tested and is known to work with Python 3.11.11, but it is likely to work with other Python versions as well. It is recommended to use a virtual environment, such as [Conda](https://www.anaconda.com/download), for setting up and running the project to avoid potential conflicts with other Python packages you may have installed.
 
+On Windows, before continuing, ensure that you have the [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) installed. They are required for installing dependencies. If you skip this step, you will likely encounter an error prompting you to install them.
+
 Follow these steps to install Refacer and its dependencies:
 
     ```bash
@@ -85,13 +87,12 @@ Follow these steps to install Refacer and its dependencies:
     git clone https://github.com/MechasAI/NeoRefacer.git
     cd NeoRefacer
     
-    # Windows: Create the environment
+    # Create the environment
+    # Windows:
     conda create -n neorefacer-env python=3.11 nomkl conda-forge::vs2015_runtime
-    
-    # Linux: Create the environment
+    # Linux:
     conda create -n neorefacer-env python=3.11 nomkl
-    
-    # MacOS: Create the environment
+    # MacOS:
     conda create -n neorefacer-env python=3.11
     
     # Activate the environment
