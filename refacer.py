@@ -30,8 +30,12 @@ gc = __import__('gc')
 # Preload NVIDIA DLLs if Windows
 if sys.platform in ("win32", "win64"):
     if hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin")
-        os.add_dll_directory(r"C:\Program Files\NVIDIA\CUDNN\v9.4\bin\12.6")
+        try:
+            os.add_dll_directory(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin")
+            os.add_dll_directory(r"C:\Program Files\NVIDIA\CUDNN\v9.4\bin\12.6")
+        except Exception as e:
+            print(f"[INFO] Failed to add CUDA or CUDNN DLL directory: {e}")
+            print("[INFO] This error can be ignored if running in CPU mode. Otherwise, make sure the paths are correct.")
 
     if hasattr(rt, "preload_dlls"):
         rt.preload_dlls()

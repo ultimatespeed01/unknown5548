@@ -77,7 +77,7 @@ On Windows, before continuing, ensure that you have the [Visual Studio Build Too
 
 Follow these steps to install Refacer and its dependencies:
 
-    ```bash
+```bash
     # Check if ffmpeg is available (if not, you might to download it and add it to your PATH)
     # Windows: download ffmpeg-git-essentials.7z from https://www.gyan.dev/ffmpeg/builds/
     # Other systems: see a tutorial https://www.hostinger.com/tutorials/how-to-install-ffmpeg
@@ -107,7 +107,7 @@ Follow these steps to install Refacer and its dependencies:
     
     # For CoreML only (compatible with MacOSX, requires Silicon architecture):
     pip install -r requirements-COREML.txt
-    ```
+```
 
 For NVIDIA GPU, make sure you have both NVIDIA GPU Computing Toolkit and NVIDIA CUDNN installed. The onnxruntime-gpu version must match your version of CUDA. This example uses onnxruntime-gpu 1.21.0, which is compatible with CUDA 12.6 and CUDNN 9.4 - Refacer.py is pre-loading both libraries. Remember to update the paths if needed in refacer.py if you have different location or versions.
 
