@@ -1,10 +1,10 @@
 <img src="https://raw.githubusercontent.com/MechasAI/NeoRefacer/main/icon.png"/>
 
-# NeoRefacer: Images. GIFs. Full-length videos.
+# NeoRefacer: Images. GIFs. TIFFs. Full-length videos.
 
 In a future where identity flows like data and reality is just another layer, NeoRefacer gives you the power to transform.
 
-Images. GIFs. Full-length videos.
+Images. GIFs. TIFFs. Full-length videos.
 
 All yours to reface and reimagine - with a single pulse of electricity.
 
@@ -20,7 +20,7 @@ Evolved from the foundations of the [Refacer](https://github.com/xaviviro/reface
 [OFFICIAL WEBSITE](https://www.mechas.ai/projects-neorefacer.php)
 
 ## Core DNA of NeoRefacer
-* **Instant Identity Shift** - Swap faces in images, GIFs, and movies faster than your neural implants can blink.
+* **Instant Identity Shift** - Swap faces in images, GIFs, multi-page TIFFs and movies faster than your neural implants can blink.
 * **Overclocked Engine** - Optimized for CPU rebels and GPU warlords.
 * **Feature Film Reface** - Not just TikToks. Full two-hour cinematic overthrows.
 * **Targeted Strike Modes** - Single-face raids, multi-face takeovers, or precision-targeted matchups.
@@ -37,7 +37,7 @@ Evolved from the foundations of the [Refacer](https://github.com/xaviviro/reface
 
 ## What's New (Since Refacer)
 
-* Image, GIF and Video reface modes
+* Image, GIF, TIFF and Video reface modes
 * Significantly faster processing
 * Automatic image enhancing (Image mode)
 * Improved video output quality
@@ -48,8 +48,10 @@ Evolved from the foundations of the [Refacer](https://github.com/xaviviro/reface
  * **Multiple Faces** (Fast): faces are replaced with the faces you provide based on their order from left to right
  * **Faces by Match** (Slower): faces are first detected and replaced with the faces you provide.
 * Improved GPU detection
+* Support for multi-page TIFF
 * Uses local Gradio cache with auto-cleanup on startup 
 * Includes a bulk image refacer utility (refacer_bulk.py) 
+* Videos and images are saved to the root of /output, and GIFs are saved to /output/gifs and previews are saved to /output/preview subdirectory
 
 NeoRefacer, just like the original Refacer project, requires no training - just one photo and you're ready to go.
 

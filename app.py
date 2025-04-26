@@ -106,17 +106,29 @@ def extract_faces_auto(filepath, refacer_instance, max_faces=5, isvideo=False):
     if filepath is None:
         return [None] * max_faces
 
-    # Check if video
+    # Check if video is too large
     if isvideo:
         if os.path.getsize(filepath) > 5 * 1024 * 1024:  # larger than 5MB
             print("Video too large for auto-extract, skipping face extraction.")
             return [None] * max_faces
 
+    # Load first frame
     frame = load_first_frame(filepath)
     if frame is None:
         return [None] * max_faces
 
-    # Create manual temp image inside ./tmp
+    print("Loaded frame shape:", frame.shape)
+
+    # Handle weird TIFF/multipage dimensions
+    while len(frame.shape) > 3:
+        frame = frame[0]  # Keep taking the first slice until (H, W, C)
+
+    print("Fixed frame shape:", frame.shape)
+
+    if frame.shape[-1] != 3:
+        raise ValueError(f"Expected last dimension to be 3 (RGB), but got {frame.shape[-1]}")
+
+    # Create temp image inside ./tmp
     temp_image_path = os.path.join("./tmp", f"temp_face_extract_{int(time.time() * 1000)}.png")
     Image.fromarray(frame).save(temp_image_path)
 
@@ -270,6 +282,87 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             inputs=gif_input,
             outputs=[gif_preview]
         )
+        
+    # --- TIF MODE ---
+    with gr.Tab("TIFF Mode"):
+        with gr.Row():
+            tif_input = gr.File(label="Original TIF", file_types=[".tif", ".tiff"])
+            tif_preview = gr.Image(label="TIF Preview (Cover Page)", type="filepath")
+            tif_output_preview = gr.Image(label="Refaced TIF Preview (Cover Page)", type="filepath")
+            tif_output_file = gr.File(label="Refaced TIF (Download)", interactive=False)
+
+        with gr.Row():
+            face_mode_tif = gr.Radio(
+                choices=["Single Face", "Multiple Faces", "Faces By Match"],
+                value="Single Face",
+                label="Replacement Mode"
+            )
+            tif_btn = gr.Button("Reface TIF", variant="primary")
+
+        origin_tif, destination_tif, thresholds_tif, face_tabs_tif = [], [], [], []
+
+        for i in range(num_faces):
+            with gr.Tab(f"Face #{i+1}") as tab:
+                with gr.Row():
+                    origin = gr.Image(label="Face to replace")
+                    destination = gr.Image(label="Destination face")
+                threshold = gr.Slider(label="Threshold", minimum=0.0, maximum=1.0, value=0.2)
+            origin_tif.append(origin)
+            destination_tif.append(destination)
+            thresholds_tif.append(threshold)
+            face_tabs_tif.append(tab)
+
+        face_mode_tif.change(
+            fn=lambda mode: toggle_tabs_and_faces(mode, face_tabs_tif, origin_tif),
+            inputs=[face_mode_tif],
+            outputs=face_tabs_tif + origin_tif
+        )
+
+        demo.load(
+            fn=lambda: toggle_tabs_and_faces("Single Face", face_tabs_tif, origin_tif),
+            inputs=None,
+            outputs=face_tabs_tif + origin_tif
+        )
+
+        def process_tif(tif_path, *vars):
+            original_img = Image.open(tif_path)
+            if hasattr(original_img, "n_frames") and original_img.n_frames > 1:
+                original_img.seek(0)
+            temp_preview_path = os.path.join("./tmp", f"tif_preview_{int(time.time() * 1000)}.jpg")
+            original_img.convert('RGB').save(temp_preview_path)
+
+            refaced_path = run_image(tif_path, *vars)
+
+            refaced_img = Image.open(refaced_path)
+            if hasattr(refaced_img, "n_frames") and refaced_img.n_frames > 1:
+                refaced_img.seek(0)
+            temp_refaced_preview_path = os.path.join("./tmp", f"refaced_tif_preview_{int(time.time() * 1000)}.jpg")
+            refaced_img.convert('RGB').save(temp_refaced_preview_path)
+
+            return temp_preview_path, temp_refaced_preview_path, refaced_path
+
+        tif_btn.click(
+            fn=lambda tif_path, *args: process_tif(tif_path, *args),
+            inputs=[tif_input] + origin_tif + destination_tif + thresholds_tif + [face_mode_tif],
+            outputs=[tif_preview, tif_output_preview, tif_output_file]
+        )
+
+        tif_input.change(
+            fn=lambda filepath: extract_faces_auto(filepath, refacer, max_faces=num_faces),
+            inputs=tif_input,
+            outputs=origin_tif
+        )
+
+        tif_input.change(
+            fn=lambda filepath: (
+                Image.open(filepath).convert('RGB').save(
+                    (preview_path := os.path.join("./tmp", f"tif_preview_{int(time.time() * 1000)}.jpg"))
+                ) or preview_path
+            ),
+            inputs=tif_input,
+            outputs=tif_preview
+        )
+
 
     # --- VIDEO MODE ---
     with gr.Tab("Video Mode"):

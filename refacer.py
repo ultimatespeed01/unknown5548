@@ -22,7 +22,7 @@ import subprocess
 from PIL import Image
 import numpy as np
 import time
-from codeformer_wrapper import enhance_image
+from codeformer_wrapper import enhance_image, enhance_image_memory
 import tempfile
 
 gc = __import__('gc')
@@ -235,8 +235,14 @@ class Refacer:
         filename = f"{original_name}_preview.mp4" if preview else f"{original_name}_{timestamp}.mp4"
 
         self.__check_video_has_audio(video_path)
-        os.makedirs("output", exist_ok=True)
-        output_video_path = os.path.join('output', filename)
+        
+        if preview:
+            os.makedirs("output/preview", exist_ok=True)
+            output_video_path = os.path.join('output', 'preview', filename)
+        else:
+            os.makedirs("output", exist_ok=True)
+            output_video_path = os.path.join('output', filename)
+            
         self.prepare_faces(faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
         self.first_face = False if multiple_faces_mode else (faces[0].get("origin") is None or disable_similarity)
 
@@ -275,13 +281,18 @@ class Refacer:
         converted_path = self.__convert_video(video_path, output_video_path, preview=preview)
 
         if video_path.lower().endswith(".gif"):
-            gif_output_path = converted_path.replace(".mp4", ".gif")
+            if preview:
+                gif_output_path = os.path.join("output", "preview", os.path.basename(converted_path).replace(".mp4", ".gif"))
+            else:
+                gif_output_path = os.path.join("output", "gifs", os.path.basename(converted_path).replace(".mp4", ".gif"))
+
             self.__generate_gif(converted_path, gif_output_path)
             return converted_path, gif_output_path
 
         return converted_path, None
 
     def __generate_gif(self, video_path, gif_output_path):
+        os.makedirs(os.path.dirname(gif_output_path), exist_ok=True)
         print(f"Generating GIF at {gif_output_path}")
         (
             ffmpeg
@@ -307,22 +318,57 @@ class Refacer:
         self.prepare_faces(faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
         self.first_face = False if multiple_faces_mode else (faces[0].get("origin") is None or disable_similarity)
 
-        bgr_image = cv2.imread(image_path)
-        if bgr_image is None:
-            raise ValueError("Failed to read input image")
-
-        refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
-        refaced_rgb = cv2.cvtColor(refaced_bgr, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(refaced_rgb)
+        ext = osp.splitext(image_path)[1].lower()
         os.makedirs("output", exist_ok=True)
         original_name = osp.splitext(osp.basename(image_path))[0]
         timestamp = str(int(time.time()))
-        filename = f"{original_name}_{timestamp}.jpg"
-        output_path = os.path.join("output", filename)
-        pil_img.save(output_path, format='JPEG', quality=100, subsampling=0)
-        output_path = enhance_image(output_path)
-        print(f"Saved refaced image to {output_path}")
-        return output_path
+
+        if ext in ['.tif', '.tiff']:
+            pil_img = Image.open(image_path)
+            frames = []
+
+            # First, count pages
+            page_count = 0
+            try:
+                while True:
+                    pil_img.seek(page_count)
+                    page_count += 1
+            except EOFError:
+                pass  # End of pages
+
+            # Re-open to start real processing
+            pil_img = Image.open(image_path)
+
+            with tqdm(total=page_count, desc="Processing TIFF pages") as pbar:
+                for page in range(page_count):
+                    pil_img.seek(page)
+                    bgr_image = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
+                    refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
+                    enhanced_bgr = enhance_image_memory(refaced_bgr)
+                    enhanced_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
+                    enhanced_pil = Image.fromarray(enhanced_rgb)
+                    frames.append(enhanced_pil)
+                    pbar.update(1)
+
+            output_path = os.path.join("output", f"{original_name}_{timestamp}.tif")
+            frames[0].save(output_path, save_all=True, append_images=frames[1:], compression="tiff_deflate")
+            print(f"Saved multipage refaced TIFF to {output_path}")
+            return output_path
+
+        else:
+            bgr_image = cv2.imread(image_path)
+            if bgr_image is None:
+                raise ValueError("Failed to read input image")
+
+            refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
+            refaced_rgb = cv2.cvtColor(refaced_bgr, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(refaced_rgb)
+            filename = f"{original_name}_{timestamp}.jpg"
+            output_path = os.path.join("output", filename)
+            pil_img.save(output_path, format='JPEG', quality=100, subsampling=0)
+            output_path = enhance_image(output_path)
+            print(f"Saved refaced image to {output_path}")
+            return output_path
 
     def extract_faces_from_image(self, image_path, max_faces=5):
         frame = cv2.imread(image_path)

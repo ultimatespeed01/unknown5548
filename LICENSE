@@ -72,8 +72,8 @@ Please follow the instructions provided below:
 - Remove the subdirectories basicsr and facelib
 - Remove within weights subdirectory Codeformer and facelib.
 - Remove codeformer_wrapper.py
-- Edit refacer.py and remove the import: codeformer_wrapper import enhance_image
-- Within def reface_image, comment the line: output_path = enhance_image(output_path)
+- Edit refacer.py and remove the import: codeformer_wrapper
+- Adjust the code so that it doesn't calls the enhance functions from the commented wrapper
 - That's all!
 
 Failure to remove `codeformer` when required may violate the terms of its license.
