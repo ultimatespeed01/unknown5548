@@ -133,7 +133,15 @@ Then, open your web browser and navigate to the following address:
 http://127.0.0.1:7680
 ```
 
-A bulk refacer utility is also available and can be called using the following command:
+## Bulk Refacing
+
+There are two ways to perform bulk refacing:
+
+1. Using the GUI (Graphical User Interface):
+Select **TIFF mode**, and then input a multi-page TIFF file. A multi-page TIFF is a special type of TIFF file that contains multiple images (pages) inside a single .tif file — similar to how a PDF can have many pages. Instead of handling individual images separately, all the images are stored together in one file. You can create a multi-page TIFF using an image editor that supports this format. Once you input this multi-page TIFF into the application, it will automatically process and reface every image (page) inside it. After processing, the output will be a .tif file where all internal images have been refaced.
+
+2. Using the CLI (Command Line Interface):
+You can call the **refacer_bulk.py** script directly through the command line. This allows you to process multiple images in a batch by providing the necessary parameters via CLI command, as shown below.
 
 ```bash
 python refacer_bulk.py --input_path ./input --dest_face myface.jpg
