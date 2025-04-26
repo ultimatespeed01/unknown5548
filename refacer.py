@@ -342,7 +342,7 @@ class Refacer:
             cropped = frame[y1:y2, x1:x2]
             pil_img = Image.fromarray(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB))
 
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, dir="./tmp", suffix=".png")
             pil_img.save(temp_file.name)
             cropped_faces.append(temp_file.name)
 

@@ -48,7 +48,7 @@ num_faces = args.max_num_faces
 
 def create_dummy_image():
     dummy = Image.new('RGB', (1, 1), color=(255, 255, 255))
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    temp_file = tempfile.NamedTemporaryFile(delete=False, dir="./tmp", suffix=".png")
     dummy.save(temp_file.name)
     return temp_file.name
 
