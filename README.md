@@ -47,6 +47,7 @@ Evolved from the foundations of the [Refacer](https://github.com/xaviviro/reface
  * **Single Face** (Fast): all faces are replaced with a single face. Ideal for images, GIFs or videos with a single face
  * **Multiple Faces** (Fast): faces are replaced with the faces you provide based on their order from left to right
  * **Faces by Match** (Slower): faces are first detected and replaced with the faces you provide.
+* Reface ratio: full face to half face.
 * Improved GPU detection
 * Support for multi-page TIFF
 * Uses local Gradio cache with auto-cleanup on startup 

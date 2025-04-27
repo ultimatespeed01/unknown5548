@@ -56,8 +56,9 @@ def run_image(*vars):
     image_path = vars[0]
     origins = vars[1:(num_faces+1)]
     destinations = vars[(num_faces+1):(num_faces*2)+1]
-    thresholds = vars[(num_faces*2)+1:-1]
-    face_mode = vars[-1]
+    thresholds = vars[(num_faces*2)+1:-2]
+    face_mode = vars[-2]
+    partial_reface_ratio = vars[-1]
 
     disable_similarity = (face_mode in ["Single Face", "Multiple Faces"])
     multiple_faces_mode = (face_mode == "Multiple Faces")
@@ -71,15 +72,16 @@ def run_image(*vars):
                 'threshold': thresholds[k] if not multiple_faces_mode else 0.0
             })
 
-    return refacer.reface_image(image_path, faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
+    return refacer.reface_image(image_path, faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode, partial_reface_ratio=partial_reface_ratio)
 
 def run(*vars):
     video_path = vars[0]
     origins = vars[1:(num_faces+1)]
     destinations = vars[(num_faces+1):(num_faces*2)+1]
-    thresholds = vars[(num_faces*2)+1:-2]
-    preview = vars[-2]
-    face_mode = vars[-1]
+    thresholds = vars[(num_faces*2)+1:-3]
+    preview = vars[-3]
+    face_mode = vars[-2]
+    partial_reface_ratio = vars[-1]
 
     disable_similarity = (face_mode in ["Single Face", "Multiple Faces"])
     multiple_faces_mode = (face_mode == "Multiple Faces")
@@ -93,7 +95,7 @@ def run(*vars):
                 'threshold': thresholds[k] if not multiple_faces_mode else 0.0
             })
 
-    mp4_path, gif_path = refacer.reface(video_path, faces, preview=preview, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
+    mp4_path, gif_path = refacer.reface(video_path, faces, preview=preview, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode, partial_reface_ratio=partial_reface_ratio)
     return mp4_path, gif_path if gif_path else None
 
 def load_first_frame(filepath):
@@ -106,36 +108,26 @@ def extract_faces_auto(filepath, refacer_instance, max_faces=5, isvideo=False):
     if filepath is None:
         return [None] * max_faces
 
-    # Check if video is too large
-    if isvideo:
-        if os.path.getsize(filepath) > 5 * 1024 * 1024:  # larger than 5MB
-            print("Video too large for auto-extract, skipping face extraction.")
-            return [None] * max_faces
+    if isvideo and os.path.getsize(filepath) > 5 * 1024 * 1024:
+        print("Video too large for auto-extract, skipping face extraction.")
+        return [None] * max_faces
 
-    # Load first frame
     frame = load_first_frame(filepath)
     if frame is None:
         return [None] * max_faces
 
-    print("Loaded frame shape:", frame.shape)
-
-    # Handle weird TIFF/multipage dimensions
     while len(frame.shape) > 3:
-        frame = frame[0]  # Keep taking the first slice until (H, W, C)
-
-    print("Fixed frame shape:", frame.shape)
+        frame = frame[0]
 
     if frame.shape[-1] != 3:
         raise ValueError(f"Expected last dimension to be 3 (RGB), but got {frame.shape[-1]}")
 
-    # Create temp image inside ./tmp
     temp_image_path = os.path.join("./tmp", f"temp_face_extract_{int(time.time() * 1000)}.png")
     Image.fromarray(frame).save(temp_image_path)
 
     try:
         faces = refacer_instance.extract_faces_from_image(temp_image_path, max_faces=max_faces)
-        output_faces = faces + [None] * (max_faces - len(faces))
-        return output_faces
+        return faces + [None] * (max_faces - len(faces))
     finally:
         if os.path.exists(temp_image_path):
             try:
@@ -154,9 +146,15 @@ def toggle_tabs_and_faces(mode, face_tabs, origin_faces):
         tab_updates = [gr.update(visible=True) for _ in range(len(face_tabs))]
         origin_updates = [gr.update(visible=True) for _ in range(len(origin_faces))]
     return tab_updates + origin_updates
+    
+def handle_tif_preview(filepath):
+    if filepath is None:
+        return None
+    preview_path = os.path.join("./tmp", f"tif_preview_{int(time.time() * 1000)}.jpg")
+    Image.open(filepath).convert('RGB').save(preview_path)
+    return preview_path
 
 # --- UI ---
-
 theme = gr.themes.Base(primary_hue="blue", secondary_hue="cyan")
 
 with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
@@ -179,11 +177,8 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             image_output = gr.Image(label="Refaced image", interactive=False, type="filepath")
 
         with gr.Row():
-            face_mode_image = gr.Radio(
-                choices=["Single Face", "Multiple Faces", "Faces By Match"],
-                value="Single Face",
-                label="Replacement Mode"
-            )
+            face_mode_image = gr.Radio(["Single Face", "Multiple Faces", "Faces By Match"], value="Single Face", label="Replacement Mode")
+            partial_reface_ratio_image = gr.Slider(label="Reface Ratio (0 = Full Face, 0.5 = Half Face)", minimum=0.0, maximum=0.5, value=0.0, step=0.1)
             image_btn = gr.Button("Reface Image", variant="primary")
 
         origin_image, destination_image, thresholds_image, face_tabs_image = [], [], [], []
@@ -199,29 +194,12 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             thresholds_image.append(threshold)
             face_tabs_image.append(tab)
 
-        face_mode_image.change(
-            fn=lambda mode: toggle_tabs_and_faces(mode, face_tabs_image, origin_image),
-            inputs=[face_mode_image],
-            outputs=face_tabs_image + origin_image
-        )
+        face_mode_image.change(fn=lambda mode: toggle_tabs_and_faces(mode, face_tabs_image, origin_image), inputs=[face_mode_image], outputs=face_tabs_image + origin_image)
+        demo.load(fn=lambda: toggle_tabs_and_faces("Single Face", face_tabs_image, origin_image), inputs=None, outputs=face_tabs_image + origin_image)
 
-        demo.load(
-            fn=lambda: toggle_tabs_and_faces("Single Face", face_tabs_image, origin_image),
-            inputs=None,
-            outputs=face_tabs_image + origin_image
-        )
-
-        image_btn.click(
-            fn=run_image,
-            inputs=[image_input] + origin_image + destination_image + thresholds_image + [face_mode_image],
-            outputs=[image_output]
-        )
-
-        image_input.change(
-            fn=lambda filepath: extract_faces_auto(filepath, refacer, max_faces=num_faces),
-            inputs=image_input,
-            outputs=origin_image
-        )
+        image_btn.click(fn=run_image, inputs=[image_input] + origin_image + destination_image + thresholds_image + [face_mode_image, partial_reface_ratio_image], outputs=[image_output])
+        image_input.change(fn=lambda filepath: extract_faces_auto(filepath, refacer, max_faces=num_faces), inputs=image_input, outputs=origin_image)
+        image_input.change(fn=lambda _: 0.0, inputs=image_input, outputs=partial_reface_ratio_image)
 
     # --- GIF MODE ---
     with gr.Tab("GIF Mode"):
@@ -232,14 +210,10 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             gif_file_output = gr.Image(label="Refaced GIF (GIF)", type="filepath")
 
         with gr.Row():
-            face_mode_gif = gr.Radio(
-                choices=["Single Face", "Multiple Faces", "Faces By Match"],
-                value="Single Face",
-                label="Replacement Mode"
-            )
+            face_mode_gif = gr.Radio(["Single Face", "Multiple Faces", "Faces By Match"], value="Single Face", label="Replacement Mode")
+            partial_reface_ratio_gif = gr.Slider(label="Reface Ratio (0 = Full Face, 0.5 = Half Face)", minimum=0.0, maximum=0.5, value=0.0, step=0.1)
             gif_btn = gr.Button("Reface GIF", variant="primary")
-
-        preview_checkbox_gif = gr.Checkbox(label="Preview Generation (skip 90% of frames)", value=False)
+            preview_checkbox_gif = gr.Checkbox(label="Preview Generation (skip 90% of frames)", value=False)
 
         origin_gif, destination_gif, thresholds_gif, face_tabs_gif = [], [], [], []
 
@@ -254,34 +228,15 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             thresholds_gif.append(threshold)
             face_tabs_gif.append(tab)
 
-        face_mode_gif.change(
-            fn=lambda mode: toggle_tabs_and_faces(mode, face_tabs_gif, origin_gif),
-            inputs=[face_mode_gif],
-            outputs=face_tabs_gif + origin_gif
-        )
+        face_mode_gif.change(fn=lambda mode: toggle_tabs_and_faces(mode, face_tabs_gif, origin_gif), inputs=[face_mode_gif], outputs=face_tabs_gif + origin_gif)
+        demo.load(fn=lambda: toggle_tabs_and_faces("Single Face", face_tabs_gif, origin_gif), inputs=None, outputs=face_tabs_gif + origin_gif)
 
-        demo.load(
-            fn=lambda: toggle_tabs_and_faces("Single Face", face_tabs_gif, origin_gif),
-            inputs=None,
-            outputs=face_tabs_gif + origin_gif
-        )
+        gif_btn.click(fn=run, inputs=[gif_input] + origin_gif + destination_gif + thresholds_gif + [preview_checkbox_gif, face_mode_gif, partial_reface_ratio_gif], outputs=[gif_output, gif_file_output])
 
-        gif_btn.click(
-            fn=lambda *args: run(*args),
-            inputs=[gif_input] + origin_gif + destination_gif + thresholds_gif + [preview_checkbox_gif, face_mode_gif],
-            outputs=[gif_output, gif_file_output]
-        )
+        gif_input.change(fn=lambda filepath: extract_faces_auto(filepath, refacer, max_faces=num_faces), inputs=gif_input, outputs=origin_gif)
+        gif_input.change(fn=lambda file: file, inputs=gif_input, outputs=[gif_preview])
+        gif_input.change(fn=lambda _: 0.0, inputs=gif_input, outputs=partial_reface_ratio_gif)
 
-        gif_input.change(
-            fn=lambda filepath: extract_faces_auto(filepath, refacer, max_faces=num_faces),
-            inputs=gif_input,
-            outputs=origin_gif
-        )
-        gif_input.change(
-            fn=lambda file: file,
-            inputs=gif_input,
-            outputs=[gif_preview]
-        )
         
     # --- TIF MODE ---
     with gr.Tab("TIFF Mode"):
@@ -297,6 +252,7 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
                 value="Single Face",
                 label="Replacement Mode"
             )
+            partial_reface_ratio_tif = gr.Slider(label="Reface Ratio (0 = Full Face, 0.5 = Half Face)", minimum=0.0, maximum=0.5, value=0.0, step=0.1)
             tif_btn = gr.Button("Reface TIF", variant="primary")
 
         origin_tif, destination_tif, thresholds_tif, face_tabs_tif = [], [], [], []
@@ -343,7 +299,7 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
 
         tif_btn.click(
             fn=lambda tif_path, *args: process_tif(tif_path, *args),
-            inputs=[tif_input] + origin_tif + destination_tif + thresholds_tif + [face_mode_tif],
+            inputs=[tif_input] + origin_tif + destination_tif + thresholds_tif + [face_mode_tif, partial_reface_ratio_tif],
             outputs=[tif_preview, tif_output_preview, tif_output_file]
         )
 
@@ -354,14 +310,12 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
         )
 
         tif_input.change(
-            fn=lambda filepath: (
-                Image.open(filepath).convert('RGB').save(
-                    (preview_path := os.path.join("./tmp", f"tif_preview_{int(time.time() * 1000)}.jpg"))
-                ) or preview_path
-            ),
+            fn=handle_tif_preview,
             inputs=tif_input,
             outputs=tif_preview
         )
+        
+        tif_input.change(fn=lambda _: 0.0, inputs=tif_input, outputs=partial_reface_ratio_tif)
 
 
     # --- VIDEO MODE ---
@@ -376,6 +330,7 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
                 value="Single Face",
                 label="Replacement Mode"
             )
+            partial_reface_ratio_video = gr.Slider(label="Reface Ratio (0 = Full Face, 0.5 = Half Face)", minimum=0.0, maximum=0.5, value=0.0, step=0.1)
             video_btn = gr.Button("Reface Video", variant="primary")
 
         preview_checkbox_video = gr.Checkbox(label="Preview Generation (skip 90% of frames)", value=False)
@@ -410,10 +365,12 @@ with gr.Blocks(theme=theme, title="NeoRefacer - AI Refacer") as demo:
             inputs=video_input,
             outputs=origin_video
         )
+        
+        video_input.change(fn=lambda _: 0.0, inputs=video_input, outputs=partial_reface_ratio_video)
 
         video_btn.click(
             fn=lambda *args: run(*args),
-            inputs=[video_input] + origin_video + destination_video + thresholds_video + [preview_checkbox_video, face_mode_video],
+            inputs=[video_input] + origin_video + destination_video + thresholds_video + [preview_checkbox_video, face_mode_video, partial_reface_ratio_video],
             outputs=[video_output, gr.File(visible=False)]
         )
 

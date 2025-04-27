@@ -55,6 +55,46 @@ class Refacer:
         self.__check_providers()
         self.total_mem = psutil.virtual_memory().total
         self.__init_apps()
+        
+    def _partial_face_blend(self, original_frame, swapped_frame, face):
+        h_frame, w_frame = original_frame.shape[:2]
+    
+        x1, y1, x2, y2 = map(int, face.bbox)
+        x1 = max(0, min(x1, w_frame-1))
+        y1 = max(0, min(y1, h_frame-1))
+        x2 = max(0, min(x2, w_frame))
+        y2 = max(0, min(y2, h_frame))
+    
+        if x2 <= x1 or y2 <= y1:
+            print(f"Invalid bbox: {x1},{y1},{x2},{y2}")
+            return swapped_frame
+    
+        w = x2 - x1
+        h = y2 - y1
+        cutoff = int(h * (1.0 - self.blend_height_ratio))
+    
+        swap_crop = swapped_frame[y1:y2, x1:x2].copy()
+        orig_crop = original_frame[y1:y2, x1:x2].copy()
+    
+        mask = np.ones((h, w, 3), dtype=np.float32)
+        transition = 40
+    
+        if cutoff < h:
+            blend_start = max(cutoff - transition // 2, 0)
+            blend_end = min(cutoff + transition // 2, h)
+    
+            if blend_end > blend_start:
+                alpha = np.linspace(1.0, 0.0, blend_end - blend_start)[:, np.newaxis, np.newaxis]
+                mask[blend_start:blend_end, :, :] = alpha
+            mask[blend_end:, :, :] = 0.0
+    
+        blended_crop = (swap_crop.astype(np.float32) * mask + orig_crop.astype(np.float32) * (1.0 - mask)).astype(np.uint8)
+    
+        blended_frame = swapped_frame.copy()
+        blended_frame[y1:y2, x1:x2] = blended_crop
+    
+        return blended_frame
+    
 
     def __download_with_progress(self, url, output_path):
         response = requests.get(url, stream=True)
@@ -182,33 +222,53 @@ class Refacer:
         faces = self.__get_faces(frame, max_num=0)
         if not faces:
             return frame
-
+    
         if self.disable_similarity:
             for face in faces:
-                frame = self.face_swapper.get(frame, face, self.replacement_faces[0][1], paste_back=True)
+                swapped = self.face_swapper.get(frame, face, self.replacement_faces[0][1], paste_back=True)
+                if hasattr(self, 'partial_reface_ratio') and self.partial_reface_ratio > 0.0:
+                    self.blend_height_ratio = self.partial_reface_ratio
+                    frame = self._partial_face_blend(frame, swapped, face)
+                else:
+                    frame = swapped
         return frame
 
     def process_faces(self, frame):
         faces = self.__get_faces(frame, max_num=0)
         if not faces:
             return frame
-
-        faces = sorted(faces, key=lambda face: face.bbox[0])  # Sort left to right
-
+ 
+        faces = sorted(faces, key=lambda face: face.bbox[0])
+ 
         if self.multiple_faces_mode:
             for idx, face in enumerate(faces):
                 if idx >= len(self.replacement_faces):
                     break
-                frame = self.face_swapper.get(frame, face, self.replacement_faces[idx][1], paste_back=True)
+                swapped = self.face_swapper.get(frame, face, self.replacement_faces[idx][1], paste_back=True)
+                if hasattr(self, 'partial_reface_ratio') and self.partial_reface_ratio > 0.0:
+                    self.blend_height_ratio = self.partial_reface_ratio
+                    frame = self._partial_face_blend(frame, swapped, face)
+                else:
+                    frame = swapped
         elif self.disable_similarity:
             for face in faces:
-                frame = self.face_swapper.get(frame, face, self.replacement_faces[0][1], paste_back=True)
+                swapped = self.face_swapper.get(frame, face, self.replacement_faces[0][1], paste_back=True)
+                if hasattr(self, 'partial_reface_ratio') and self.partial_reface_ratio > 0.0:
+                    self.blend_height_ratio = self.partial_reface_ratio
+                    frame = self._partial_face_blend(frame, swapped, face)
+                else:
+                    frame = swapped
         else:
             for rep_face in self.replacement_faces:
                 for i in range(len(faces) - 1, -1, -1):
                     sim = self.rec_app.compute_sim(rep_face[0], faces[i].embedding)
                     if sim >= rep_face[2]:
-                        frame = self.face_swapper.get(frame, faces[i], rep_face[1], paste_back=True)
+                        swapped = self.face_swapper.get(frame, faces[i], rep_face[1], paste_back=True)
+                        if hasattr(self, 'partial_reface_ratio') and self.partial_reface_ratio > 0.0:
+                            self.blend_height_ratio = self.partial_reface_ratio
+                            frame = self._partial_face_blend(frame, swapped, faces[i])
+                        else:
+                            frame = swapped
                         del faces[i]
                         break
         return frame
@@ -229,36 +289,37 @@ class Refacer:
         if audio_stream is not None:
             self.video_has_audio = True
 
-    def reface(self, video_path, faces, preview=False, disable_similarity=False, multiple_faces_mode=False):
+    def reface(self, video_path, faces, preview=False, disable_similarity=False, multiple_faces_mode=False, partial_reface_ratio=0.0):
         original_name = osp.splitext(osp.basename(video_path))[0]
         timestamp = str(int(time.time()))
         filename = f"{original_name}_preview.mp4" if preview else f"{original_name}_{timestamp}.mp4"
-
+    
         self.__check_video_has_audio(video_path)
-        
+    
         if preview:
             os.makedirs("output/preview", exist_ok=True)
             output_video_path = os.path.join('output', 'preview', filename)
         else:
             os.makedirs("output", exist_ok=True)
             output_video_path = os.path.join('output', filename)
-            
+    
         self.prepare_faces(faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
         self.first_face = False if multiple_faces_mode else (faces[0].get("origin") is None or disable_similarity)
-
+        self.partial_reface_ratio = partial_reface_ratio
+    
         cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
+    
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         output = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
-
+    
         frames = []
         frame_index = 0
         skip_rate = 10 if preview else 1
-
+    
         with tqdm(total=total_frames, desc="Extracting frames") as pbar:
             while cap.isOpened():
                 flag, frame = cap.read()
@@ -272,24 +333,28 @@ class Refacer:
                         gc.collect()
                 frame_index += 1
                 pbar.update()
-
+    
         cap.release()
         if frames:
             self.reface_group(faces, frames, output)
         output.release()
-
+    
         converted_path = self.__convert_video(video_path, output_video_path, preview=preview)
-
+    
         if video_path.lower().endswith(".gif"):
             if preview:
                 gif_output_path = os.path.join("output", "preview", os.path.basename(converted_path).replace(".mp4", ".gif"))
             else:
                 gif_output_path = os.path.join("output", "gifs", os.path.basename(converted_path).replace(".mp4", ".gif"))
-
+    
             self.__generate_gif(converted_path, gif_output_path)
             return converted_path, gif_output_path
-
+    
         return converted_path, None
+    
+   
+  
+
 
     def __generate_gif(self, video_path, gif_output_path):
         os.makedirs(os.path.dirname(gif_output_path), exist_ok=True)
@@ -314,61 +379,61 @@ class Refacer:
         print(f"Refaced video saved at: {os.path.abspath(new_path)}")
         return new_path
 
-    def reface_image(self, image_path, faces, disable_similarity=False, multiple_faces_mode=False):
-        self.prepare_faces(faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
-        self.first_face = False if multiple_faces_mode else (faces[0].get("origin") is None or disable_similarity)
+    def reface_image(self, image_path, faces, disable_similarity=False, multiple_faces_mode=False, partial_reface_ratio=0.0):
+         self.prepare_faces(faces, disable_similarity=disable_similarity, multiple_faces_mode=multiple_faces_mode)
+         self.first_face = False if multiple_faces_mode else (faces[0].get("origin") is None or disable_similarity)
+         self.partial_reface_ratio = partial_reface_ratio
+ 
+         ext = osp.splitext(image_path)[1].lower()
+         os.makedirs("output", exist_ok=True)
+         original_name = osp.splitext(osp.basename(image_path))[0]
+         timestamp = str(int(time.time()))
+ 
+         if ext in ['.tif', '.tiff']:
+             pil_img = Image.open(image_path)
+             frames = []
+ 
+             page_count = 0
+             try:
+                 while True:
+                     pil_img.seek(page_count)
+                     page_count += 1
+             except EOFError:
+                 pass
+ 
+             pil_img = Image.open(image_path)
+ 
+             with tqdm(total=page_count, desc="Processing TIFF pages") as pbar:
+                 for page in range(page_count):
+                     pil_img.seek(page)
+                     bgr_image = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
+                     refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
+                     enhanced_bgr = enhance_image_memory(refaced_bgr)
+                     enhanced_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
+                     enhanced_pil = Image.fromarray(enhanced_rgb)
+                     frames.append(enhanced_pil)
+                     pbar.update(1)
+ 
+             output_path = os.path.join("output", f"{original_name}_{timestamp}.tif")
+             frames[0].save(output_path, save_all=True, append_images=frames[1:], compression="tiff_deflate")
+             print(f"Saved multipage refaced TIFF to {output_path}")
+             return output_path
+ 
+         else:
+             bgr_image = cv2.imread(image_path)
+             if bgr_image is None:
+                 raise ValueError("Failed to read input image")
+ 
+             refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
+             refaced_rgb = cv2.cvtColor(refaced_bgr, cv2.COLOR_BGR2RGB)
+             pil_img = Image.fromarray(refaced_rgb)
+             filename = f"{original_name}_{timestamp}.jpg"
+             output_path = os.path.join("output", filename)
+             pil_img.save(output_path, format='JPEG', quality=100, subsampling=0)
+             output_path = enhance_image(output_path)
+             print(f"Saved refaced image to {output_path}")
+             return output_path
 
-        ext = osp.splitext(image_path)[1].lower()
-        os.makedirs("output", exist_ok=True)
-        original_name = osp.splitext(osp.basename(image_path))[0]
-        timestamp = str(int(time.time()))
-
-        if ext in ['.tif', '.tiff']:
-            pil_img = Image.open(image_path)
-            frames = []
-
-            # First, count pages
-            page_count = 0
-            try:
-                while True:
-                    pil_img.seek(page_count)
-                    page_count += 1
-            except EOFError:
-                pass  # End of pages
-
-            # Re-open to start real processing
-            pil_img = Image.open(image_path)
-
-            with tqdm(total=page_count, desc="Processing TIFF pages") as pbar:
-                for page in range(page_count):
-                    pil_img.seek(page)
-                    bgr_image = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
-                    refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
-                    enhanced_bgr = enhance_image_memory(refaced_bgr)
-                    enhanced_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
-                    enhanced_pil = Image.fromarray(enhanced_rgb)
-                    frames.append(enhanced_pil)
-                    pbar.update(1)
-
-            output_path = os.path.join("output", f"{original_name}_{timestamp}.tif")
-            frames[0].save(output_path, save_all=True, append_images=frames[1:], compression="tiff_deflate")
-            print(f"Saved multipage refaced TIFF to {output_path}")
-            return output_path
-
-        else:
-            bgr_image = cv2.imread(image_path)
-            if bgr_image is None:
-                raise ValueError("Failed to read input image")
-
-            refaced_bgr = self.process_first_face(bgr_image.copy()) if self.first_face else self.process_faces(bgr_image.copy())
-            refaced_rgb = cv2.cvtColor(refaced_bgr, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(refaced_rgb)
-            filename = f"{original_name}_{timestamp}.jpg"
-            output_path = os.path.join("output", filename)
-            pil_img.save(output_path, format='JPEG', quality=100, subsampling=0)
-            output_path = enhance_image(output_path)
-            print(f"Saved refaced image to {output_path}")
-            return output_path
 
     def extract_faces_from_image(self, image_path, max_faces=5):
         frame = cv2.imread(image_path)
