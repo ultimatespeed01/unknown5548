@@ -119,27 +119,51 @@ class Refacer:
 
         rt.set_default_logger_severity(4)
         self.sess_options = rt.SessionOptions()
-        self.sess_options.execution_mode = rt.ExecutionMode.ORT_SEQUENTIAL
+        self.sess_options.execution_mode = rt.ExecutionMode.ORT_PARALLEL  # Better parallelism
+        self.sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+        
+        def __check_providers(self):
+            if self.force_cpu:
+                self.providers = ['CPUExecutionProvider']
+            else:
+                self.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+
+        rt.set_default_logger_severity(4)
+
+        self.sess_options = rt.SessionOptions()
+        self.sess_options.execution_mode = rt.ExecutionMode.ORT_PARALLEL  # Better parallelism
         self.sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        if 'CPUExecutionProvider' in self.providers:
-            self.mode = RefacerMode.CPU
-            self.use_num_cpus = mp.cpu_count() - 1
-            self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 3)
+        # Use a temporary model session to detect the actual active provider
+        test_model = os.path.expanduser("~/.insightface/models/buffalo_l/det_10g.onnx")
+        try:
+          test_session = rt.InferenceSession(test_model, self.sess_options, providers=self.providers)
+          active_provider = test_session.get_providers()[0]  # First provider used
+        except Exception as e:
+           print(f"[ERROR] Failed to create test session: {e}")
+           active_provider = 'CPUExecutionProvider'  # Safe fallback
+
+         # Set mode based on actual provider
+        if active_provider == 'CUDAExecutionProvider':
+           self.mode = RefacerMode.CUDA
+           self.use_num_cpus = 2
+           self.sess_options.intra_op_num_threads = 1
+        elif active_provider == 'CoreMLExecutionProvider':
+           self.mode = RefacerMode.COREML
+           self.use_num_cpus = max(mp.cpu_count() - 1, 1)
+           self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 2)
+        # elif active_provider == 'TensorrtExecutionProvider':
         elif self.colab_performance:
-            self.mode = RefacerMode.TENSORRT
-            self.use_num_cpus = mp.cpu_count() - 1
-            self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 3)
-        elif 'CoreMLExecutionProvider' in self.providers:
-            self.mode = RefacerMode.COREML
-            self.use_num_cpus = mp.cpu_count() - 1
-            self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 3)
+           self.mode = RefacerMode.TENSORRT
+           self.use_num_cpus = max(mp.cpu_count() - 1, 1)
+           self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 2)
         else:
-            self.mode = RefacerMode.CUDA
-            self.use_num_cpus = 2
-            self.sess_options.intra_op_num_threads = 1
+           self.mode = RefacerMode.CPU
+           self.use_num_cpus = max(mp.cpu_count() - 1, 1)
+           self.sess_options.intra_op_num_threads = int(self.use_num_cpus / 2)
 
         print(f"Using providers: {self.providers}")
+        print(f"Active provider: {active_provider}")
         print(f"Mode: {self.mode}")
 
     def __init_apps(self):
