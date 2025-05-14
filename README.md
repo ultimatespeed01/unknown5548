@@ -64,13 +64,11 @@ NeoRefacer has been tested on the following operating systems:
 
 | Operating System | CPU Support | GPU Support |
 | ---------------- | ----------- | ----------- |
-| MacOSX           | ✅         | :warning:         |
+| MacOSX           | ✅         | ✅         |
 | Windows          | ✅         | ✅         |
 | Linux            | ✅         | ✅         |
 
-The application is compatible with both CPU and GPU (Nvidia CUDA) environments, and MacOSX(CoreML) 
-
-:warning: Please note, we do not recommend using `onnxruntime-silicon` on MacOSX due to an apparent issue with memory management. If you manage to compile `onnxruntime` for Silicon, the program is prepared to use CoreML.
+The application is compatible with both CPU and GPU (Nvidia CUDA) environments, and MacOSX (CoreML) 
 
 ## Installation
 
@@ -82,9 +80,12 @@ Follow these steps to install Refacer and its dependencies:
 
 ```bash
     # Check if ffmpeg is available (if not, you might to download it and add it to your PATH)
+    ffmpeg  
+    
     # Windows: download ffmpeg-git-essentials.7z from https://www.gyan.dev/ffmpeg/builds/
-    # Other systems: see a tutorial https://www.hostinger.com/tutorials/how-to-install-ffmpeg
-    ffmpeg    
+    # MacOS: if you have brew installed:
+    # brew install ffmpeg
+    # Other systems: see a tutorial https://www.hostinger.com/tutorials/how-to-install-ffmpeg 
 
     # Clone the repository
     git clone https://github.com/MechasAI/NeoRefacer.git
