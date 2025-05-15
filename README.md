@@ -93,9 +93,9 @@ Follow these steps to install Refacer and its dependencies:
     
     # Create the environment
     # Windows:
-    conda create -n neorefacer-env python=3.11 nomkl conda-forge::vs2015_runtime
+    conda create -n neorefacer-env python=3.11 conda-forge::vs2015_runtime
     # Linux:
-    conda create -n neorefacer-env python=3.11 nomkl
+    conda create -n neorefacer-env python=3.11
     # MacOS:
     conda create -n neorefacer-env python=3.11
     
@@ -107,6 +107,12 @@ Follow these steps to install Refacer and its dependencies:
     pip install -r requirements-CPU.txt
     
     # For NVIDIA RTX GPU only (compatible with Windows and Linux only, requires a NVIDIA GPU with CUDA and its libraries)
+    # Install Torch with CUDA enabled:
+    conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+    # This should install torch 2.5.1, torchaudio 2.5.1 and torchvision 0.20.1
+    # Make sure that CUDA is returning True:
+    python -c "import torch; print('CUDA:', torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0))"
+    # Now install the rest of the dependencies
     pip install -r requirements-GPU.txt
     
     # For CoreML only (compatible with MacOSX, requires Silicon architecture):
