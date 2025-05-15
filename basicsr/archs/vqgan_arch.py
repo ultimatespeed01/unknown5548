@@ -1,65 +1,64 @@
-'''
-VQGAN code, adapted from the original created by the Unleashing Transformers authors:
-https://github.com/samb-t/unleashing-transformers/blob/master/models/vqgan.py
-
-'''
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
+import os
 from basicsr.utils import get_root_logger
 from basicsr.utils.registry import ARCH_REGISTRY
 
+# Select Device
+def select_device(prefer_coreml=False):
+    if torch.backends.mps.is_available() and prefer_coreml:
+        print("BasicSR Archs: Using CoreML backend (MPS).")
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        print("BasicSR Archs: Using CUDA backend.")
+        return torch.device("cuda")
+    else:
+        print("BasicSR Archs: Using CPU backend.")
+        return torch.device("cpu")
+
+# Set device globally
+DEVICE = select_device(prefer_coreml=True)
+
 def normalize(in_channels):
     return torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6, affine=True)
-    
 
 @torch.jit.script
 def swish(x):
-    return x*torch.sigmoid(x)
+    return x * torch.sigmoid(x)
 
-
-#  Define VQVAE classes
 class VectorQuantizer(nn.Module):
     def __init__(self, codebook_size, emb_dim, beta):
         super(VectorQuantizer, self).__init__()
-        self.codebook_size = codebook_size  # number of embeddings
-        self.emb_dim = emb_dim  # dimension of embedding
-        self.beta = beta  # commitment cost used in loss term, beta * ||z_e(x)-sg[e]||^2
+        self.codebook_size = codebook_size
+        self.emb_dim = emb_dim
+        self.beta = beta
         self.embedding = nn.Embedding(self.codebook_size, self.emb_dim)
         self.embedding.weight.data.uniform_(-1.0 / self.codebook_size, 1.0 / self.codebook_size)
 
     def forward(self, z):
-        # reshape z -> (batch, height, width, channel) and flatten
         z = z.permute(0, 2, 3, 1).contiguous()
         z_flattened = z.view(-1, self.emb_dim)
 
-        # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
-        d = (z_flattened ** 2).sum(dim=1, keepdim=True) + (self.embedding.weight**2).sum(1) - \
+        d = (z_flattened ** 2).sum(dim=1, keepdim=True) + \
+            (self.embedding.weight ** 2).sum(1) - \
             2 * torch.matmul(z_flattened, self.embedding.weight.t())
 
         mean_distance = torch.mean(d)
-        # find closest encodings
-        # min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
         min_encoding_scores, min_encoding_indices = torch.topk(d, 1, dim=1, largest=False)
-        # [0-1], higher score, higher confidence
-        min_encoding_scores = torch.exp(-min_encoding_scores/10)
+        min_encoding_scores = torch.exp(-min_encoding_scores / 10)
 
-        min_encodings = torch.zeros(min_encoding_indices.shape[0], self.codebook_size).to(z)
+        min_encodings = torch.zeros(min_encoding_indices.shape[0], self.codebook_size, device=z.device)
         min_encodings.scatter_(1, min_encoding_indices, 1)
 
-        # get quantized latent vectors
         z_q = torch.matmul(min_encodings, self.embedding.weight).view(z.shape)
-        # compute loss for embedding
-        loss = torch.mean((z_q.detach()-z)**2) + self.beta * torch.mean((z_q - z.detach()) ** 2)
-        # preserve gradients
+        loss = torch.mean((z_q.detach() - z) ** 2) + self.beta * torch.mean((z_q - z.detach()) ** 2)
         z_q = z + (z_q - z).detach()
 
-        # perplexity
         e_mean = torch.mean(min_encodings, dim=0)
         perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
-        # reshape back to match original input shape
         z_q = z_q.permute(0, 3, 1, 2).contiguous()
 
         return z_q, loss, {
@@ -68,18 +67,15 @@ class VectorQuantizer(nn.Module):
             "min_encoding_indices": min_encoding_indices,
             "min_encoding_scores": min_encoding_scores,
             "mean_distance": mean_distance
-            }
+        }
 
     def get_codebook_feat(self, indices, shape):
-        # input indices: batch*token_num -> (batch*token_num)*1
-        # shape: batch, height, width, channel
-        indices = indices.view(-1,1)
-        min_encodings = torch.zeros(indices.shape[0], self.codebook_size).to(indices)
+        indices = indices.view(-1, 1)
+        min_encodings = torch.zeros(indices.shape[0], self.codebook_size, device=indices.device)
         min_encodings.scatter_(1, indices, 1)
-        # get quantized latent vectors
         z_q = torch.matmul(min_encodings.float(), self.embedding.weight)
 
-        if shape is not None:  # reshape back to match original input shape
+        if shape is not None:
             z_q = z_q.view(shape).permute(0, 3, 1, 2).contiguous()
 
         return z_q
@@ -324,112 +320,87 @@ class Generator(nn.Module):
         return x
 
   
+# Autoencoder with device transfer
 @ARCH_REGISTRY.register()
 class VQAutoEncoder(nn.Module):
-    def __init__(self, img_size, nf, ch_mult, quantizer="nearest", res_blocks=2, attn_resolutions=[16], codebook_size=1024, emb_dim=256,
-                beta=0.25, gumbel_straight_through=False, gumbel_kl_weight=1e-8, model_path=None):
+    def __init__(self, img_size, nf, ch_mult, quantizer="nearest", res_blocks=2,
+                 attn_resolutions=[16], codebook_size=1024, emb_dim=256,
+                 beta=0.25, gumbel_straight_through=False, gumbel_kl_weight=1e-8, model_path=None):
         super().__init__()
         logger = get_root_logger()
-        self.in_channels = 3 
-        self.nf = nf 
-        self.n_blocks = res_blocks 
+        self.in_channels = 3
+        self.nf = nf
         self.codebook_size = codebook_size
         self.embed_dim = emb_dim
         self.ch_mult = ch_mult
         self.resolution = img_size
         self.attn_resolutions = attn_resolutions
         self.quantizer_type = quantizer
+
         self.encoder = Encoder(
-            self.in_channels,
-            self.nf,
-            self.embed_dim,
-            self.ch_mult,
-            self.n_blocks,
-            self.resolution,
-            self.attn_resolutions
-        )
+            self.in_channels, self.nf, self.embed_dim, self.ch_mult,
+            res_blocks, self.resolution, self.attn_resolutions
+        ).to(DEVICE)
+
         if self.quantizer_type == "nearest":
-            self.beta = beta #0.25
-            self.quantize = VectorQuantizer(self.codebook_size, self.embed_dim, self.beta)
-        elif self.quantizer_type == "gumbel":
-            self.gumbel_num_hiddens = emb_dim
-            self.straight_through = gumbel_straight_through
-            self.kl_weight = gumbel_kl_weight
+            self.quantize = VectorQuantizer(self.codebook_size, self.embed_dim, beta).to(DEVICE)
+        else:
             self.quantize = GumbelQuantizer(
-                self.codebook_size,
-                self.embed_dim,
-                self.gumbel_num_hiddens,
-                self.straight_through,
-                self.kl_weight
-            )
+                self.codebook_size, self.embed_dim, emb_dim,
+                gumbel_straight_through, gumbel_kl_weight
+            ).to(DEVICE)
+
         self.generator = Generator(
-            self.nf, 
-            self.embed_dim,
-            self.ch_mult, 
-            self.n_blocks, 
-            self.resolution, 
-            self.attn_resolutions
-        )
+            self.nf, self.embed_dim, self.ch_mult, res_blocks,
+            self.resolution, self.attn_resolutions
+        ).to(DEVICE)
 
         if model_path is not None:
             chkpt = torch.load(model_path, map_location='cpu')
             if 'params_ema' in chkpt:
-                self.load_state_dict(torch.load(model_path, map_location='cpu')['params_ema'])
-                logger.info(f'vqgan is loaded from: {model_path} [params_ema]')
+                self.load_state_dict(chkpt['params_ema'])
+                logger.info(f'Loaded VQGAN from: {model_path} [params_ema]')
             elif 'params' in chkpt:
-                self.load_state_dict(torch.load(model_path, map_location='cpu')['params'])
-                logger.info(f'vqgan is loaded from: {model_path} [params]')
+                self.load_state_dict(chkpt['params'])
+                logger.info(f'Loaded VQGAN from: {model_path} [params]')
             else:
-                raise ValueError(f'Wrong params!')
-
+                raise ValueError("Invalid model format!")
 
     def forward(self, x):
+        x = x.to(DEVICE)
         x = self.encoder(x)
         quant, codebook_loss, quant_stats = self.quantize(x)
         x = self.generator(quant)
         return x, codebook_loss, quant_stats
 
-
-
-# patch based discriminator
 @ARCH_REGISTRY.register()
 class VQGANDiscriminator(nn.Module):
     def __init__(self, nc=3, ndf=64, n_layers=4, model_path=None):
         super().__init__()
-
-        layers = [nn.Conv2d(nc, ndf, kernel_size=4, stride=2, padding=1), nn.LeakyReLU(0.2, True)]
-        ndf_mult = 1
-        ndf_mult_prev = 1
-        for n in range(1, n_layers):  # gradually increase the number of filters
-            ndf_mult_prev = ndf_mult
-            ndf_mult = min(2 ** n, 8)
-            layers += [
-                nn.Conv2d(ndf * ndf_mult_prev, ndf * ndf_mult, kernel_size=4, stride=2, padding=1, bias=False),
-                nn.BatchNorm2d(ndf * ndf_mult),
-                nn.LeakyReLU(0.2, True)
-            ]
-
-        ndf_mult_prev = ndf_mult
-        ndf_mult = min(2 ** n_layers, 8)
-
-        layers += [
-            nn.Conv2d(ndf * ndf_mult_prev, ndf * ndf_mult, kernel_size=4, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(ndf * ndf_mult),
+        layers = [
+            nn.Conv2d(nc, ndf, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2, True)
         ]
-
+        nf_mult = 1
+        for n in range(1, n_layers):
+            prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            layers += [
+                nn.Conv2d(ndf * prev, ndf * nf_mult, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
         layers += [
-            nn.Conv2d(ndf * ndf_mult, 1, kernel_size=4, stride=1, padding=1)]  # output 1 channel prediction map
-        self.main = nn.Sequential(*layers)
+            nn.Conv2d(ndf * nf_mult, 1, 4, 1, 1)
+        ]
+        self.main = nn.Sequential(*layers).to(DEVICE)
 
-        if model_path is not None:
+        if model_path:
             chkpt = torch.load(model_path, map_location='cpu')
             if 'params_d' in chkpt:
-                self.load_state_dict(torch.load(model_path, map_location='cpu')['params_d'])
+                self.load_state_dict(chkpt['params_d'])
             elif 'params' in chkpt:
-                self.load_state_dict(torch.load(model_path, map_location='cpu')['params'])
-            else:
-                raise ValueError(f'Wrong params!')
+                self.load_state_dict(chkpt['params'])
 
     def forward(self, x):
-        return self.main(x)
+        return self.main(x.to(DEVICE))

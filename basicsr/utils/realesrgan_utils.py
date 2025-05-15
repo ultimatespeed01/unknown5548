@@ -44,11 +44,20 @@ class RealESRGANer():
         self.half = half
 
         # initialize model
-        if gpu_id:
-            self.device = torch.device(
-                f'cuda:{gpu_id}' if torch.cuda.is_available() else 'cpu') if device is None else device
+        if device is not None:
+            self.device = device
         else:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+            if torch.cuda.is_available():
+                if gpu_id is not None and gpu_id < torch.cuda.device_count():
+                    self.device = torch.device(f"cuda:{gpu_id}")
+                else:
+                    self.device = torch.device("cuda:0")
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
+
+
         # if the model_path starts with https, it will first download models to the folder: realesrgan/weights
         if model_path.startswith('https://'):
             model_path = load_file_from_url(

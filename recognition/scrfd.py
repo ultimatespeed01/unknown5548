@@ -269,32 +269,45 @@ class SCRFD:
         return det, kpss
 
     def autodetect(self, img, max_num=0, metric='max'):
-        bboxes, kpss = self.detect(img, input_size=(640, 640), thresh=0.5)
-        bboxes2, kpss2 = self.detect(img, input_size=(128, 128), thresh=0.5)
+        if self.session.get_providers()[0] == 'CoreMLExecutionProvider':
+            # Cache the CPU-based detector
+            if not hasattr(self, '_cpu_fallback_detector'):
+                model_path = self.model_file
+                cpu_session = onnxruntime.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+                self._cpu_fallback_detector = SCRFD(model_file=model_path, session=cpu_session)
+                self._cpu_fallback_detector.prepare(0, input_size=(640, 640))
+            
+            detector = self._cpu_fallback_detector
+        else:
+            detector = self  # Use the original GPU/CoreML session
+
+        bboxes, kpss = detector.detect(img, input_size=(640, 640), thresh=0.5)
+        bboxes2, kpss2 = detector.detect(img, input_size=(128, 128), thresh=0.5)
+        
         bboxes_all = np.concatenate([bboxes, bboxes2], axis=0)
         kpss_all = np.concatenate([kpss, kpss2], axis=0)
         keep = self.nms(bboxes_all)
-        det = bboxes_all[keep,:]
-        kpss = kpss_all[keep,:]
+        det = bboxes_all[keep, :]
+        kpss = kpss_all[keep, :]
+
         if max_num > 0 and det.shape[0] > max_num:
-            area = (det[:, 2] - det[:, 0]) * (det[:, 3] -
-                                                    det[:, 1])
+            area = (det[:, 2] - det[:, 0]) * (det[:, 3] - det[:, 1])
             img_center = img.shape[0] // 2, img.shape[1] // 2
             offsets = np.vstack([
                 (det[:, 0] + det[:, 2]) / 2 - img_center[1],
                 (det[:, 1] + det[:, 3]) / 2 - img_center[0]
             ])
             offset_dist_squared = np.sum(np.power(offsets, 2.0), 0)
-            if metric=='max':
+            if metric == 'max':
                 values = area
             else:
-                values = area - offset_dist_squared * 2.0  # some extra weight on the centering
-            bindex = np.argsort(
-                values)[::-1]  # some extra weight on the centering
+                values = area - offset_dist_squared * 2.0
+            bindex = np.argsort(values)[::-1]
             bindex = bindex[0:max_num]
             det = det[bindex, :]
             if kpss is not None:
                 kpss = kpss[bindex, :]
+
         return det, kpss
 
     def nms(self, dets):
@@ -326,4 +339,3 @@ class SCRFD:
             order = order[inds + 1]
 
         return keep
-

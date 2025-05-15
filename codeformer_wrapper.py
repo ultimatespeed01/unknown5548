@@ -9,8 +9,15 @@ from basicsr.utils.download_util import load_file_from_url
 from facelib.utils.face_restoration_helper import FaceRestoreHelper
 from basicsr.utils.registry import ARCH_REGISTRY
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Cross-platform device selection: CUDA > MPS > CPU
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
 
+# Download and load model
 pretrain_model_url = {
     'restoration': 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth',
 }
@@ -20,7 +27,7 @@ net = ARCH_REGISTRY.get('CodeFormer')(dim_embd=512, codebook_size=1024, n_head=8
 
 ckpt_path = load_file_from_url(url=pretrain_model_url['restoration'],
                                 model_dir='weights/CodeFormer', progress=True, file_name=None)
-checkpoint = torch.load(ckpt_path)['params_ema']
+checkpoint = torch.load(ckpt_path, map_location=device)['params_ema']
 net.load_state_dict(checkpoint)
 net.eval()
 
@@ -47,9 +54,9 @@ def _enhance_img(img: np.ndarray, w: float = 0.5) -> np.ndarray:
     face_helper.align_warp_face()
 
     for cropped_face in face_helper.cropped_faces:
-        cropped_face_t = img2tensor(cropped_face / 255., bgr2rgb=True, float32=True)
+        cropped_face_t = img2tensor(cropped_face / 255., bgr2rgb=True, float32=True).to(device)
         normalize(cropped_face_t, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
-        cropped_face_t = cropped_face_t.unsqueeze(0).to(device)
+        cropped_face_t = cropped_face_t.unsqueeze(0)  # (1, 3, H, W), already on correct device
 
         with torch.no_grad():
             output = net(cropped_face_t, w=w, adain=True)[0]
