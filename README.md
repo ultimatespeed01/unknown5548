@@ -108,7 +108,7 @@ Follow these steps to install Refacer and its dependencies:
     
     # For NVIDIA RTX GPU only (compatible with Windows and Linux only, requires a NVIDIA GPU with CUDA and its libraries)
     # Install Torch with CUDA enabled:
-    conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+    conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
     # This should install torch 2.5.1, torchaudio 2.5.1 and torchvision 0.20.1
     # Make sure that CUDA is returning True:
     python -c "import torch; print('CUDA:', torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0))"
